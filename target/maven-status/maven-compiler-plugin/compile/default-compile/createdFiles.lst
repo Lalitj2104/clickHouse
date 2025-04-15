@@ -1,0 +1,9 @@
+com\dataingest\DataIngestionApplication.class
+com\dataingest\model\IngestionResult$1.class
+com\dataingest\model\FlatFileConfig.class
+com\dataingest\controller\DataIngestionController.class
+com\dataingest\model\IngestionResult.class
+com\dataingest\model\ClickHouseConfig.class
+com\dataingest\model\IngestionResult$Builder.class
+com\dataingest\service\DataIngestionServiceImpl.class
+com\dataingest\service\DataIngestionService.class
