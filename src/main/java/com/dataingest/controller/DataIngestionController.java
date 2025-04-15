@@ -4,21 +4,29 @@ import com.dataingest.model.ClickHouseConfig;
 import com.dataingest.model.FlatFileConfig;
 import com.dataingest.model.IngestionResult;
 import com.dataingest.service.DataIngestionService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.util.StringUtils;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 
 @Controller
 public class DataIngestionController {
+    private static final String EXPORT_DIR = "exports";
 
     @Autowired
     private DataIngestionService dataIngestionService;
@@ -30,8 +38,14 @@ public class DataIngestionController {
 
     @PostMapping("/tables")
     @ResponseBody
-    public List<String> getTables(@RequestBody ClickHouseConfig config) {
-        return dataIngestionService.getClickHouseTables(config);
+    public ResponseEntity<?> getTables(@RequestBody ClickHouseConfig config) {
+        try {
+            List<String> tables = dataIngestionService.getClickHouseTables(config);
+            return ResponseEntity.ok(tables);
+        } catch (Exception e) {
+            return ResponseEntity.status(500)
+                    .body("Failed to fetch tables: " + e.getMessage());
+        }
     }
 
     @PostMapping("/columns")
@@ -55,10 +69,18 @@ public class DataIngestionController {
             @RequestBody ClickHouseConfig clickHouseConfig,
             @RequestParam String fileName,
             @RequestParam String delimiter,
-            @RequestParam(defaultValue = "true") boolean hasHeader) {
+            @RequestParam(defaultValue = "true") boolean hasHeader) throws IOException {
 
+        // Create exports directory if it doesn't exist
+        Path exportDir = Paths.get(EXPORT_DIR);
+        if (!Files.exists(exportDir)) {
+            Files.createDirectories(exportDir);
+        }
+
+        // Set the full file path
+        String safeName = StringUtils.cleanPath(fileName);
         FlatFileConfig fileConfig = new FlatFileConfig();
-        fileConfig.setFileName(fileName);
+        fileConfig.setFileName(exportDir.resolve(safeName).toString());
         fileConfig.setDelimiter(delimiter);
         fileConfig.setHasHeader(hasHeader);
         fileConfig.setSelectedColumns(clickHouseConfig.getSelectedColumns());
@@ -67,32 +89,72 @@ public class DataIngestionController {
         return ResponseEntity.ok(result);
     }
 
-    @PostMapping("/ingest/file-to-clickhouse")
+    @PostMapping(value = "/ingest/file-to-clickhouse", consumes = "multipart/form-data")
     @ResponseBody
     public ResponseEntity<IngestionResult> ingestToClickHouse(
             @RequestParam("file") MultipartFile file,
             @RequestParam String delimiter,
             @RequestParam(defaultValue = "true") boolean hasHeader,
-            @RequestBody ClickHouseConfig clickHouseConfig) throws Exception {
+            @RequestParam String config) throws Exception {
 
-        // Save uploaded file temporarily
-        Path tempDir = Files.createTempDirectory("clickhouse-ingestion");
-        File tempFile = new File(tempDir.toFile(), file.getOriginalFilename());
-        file.transferTo(tempFile);
-
-        FlatFileConfig fileConfig = new FlatFileConfig();
-        fileConfig.setFileName(tempFile.getAbsolutePath());
-        fileConfig.setDelimiter(delimiter);
-        fileConfig.setHasHeader(hasHeader);
-        fileConfig.setSelectedColumns(clickHouseConfig.getSelectedColumns());
-
+        ObjectMapper mapper = new ObjectMapper();
+        
         try {
-            IngestionResult result = dataIngestionService.ingestFromFileToClickHouse(fileConfig, clickHouseConfig);
-            return ResponseEntity.ok(result);
-        } finally {
-            // Cleanup
-            tempFile.delete();
-            tempDir.toFile().delete();
+            ClickHouseConfig clickHouseConfig = mapper.readValue(config, ClickHouseConfig.class);
+            
+            if (file.isEmpty()) {
+                return ResponseEntity.badRequest().body(
+                    IngestionResult.builder()
+                        .success(false)
+                        .message("Please select a file")
+                        .build()
+                );
+            }
+
+            // Save uploaded file temporarily
+            Path tempDir = Files.createTempDirectory("clickhouse-ingestion");
+            File tempFile = new File(tempDir.toFile(), StringUtils.cleanPath(file.getOriginalFilename()));
+            file.transferTo(tempFile);
+
+            FlatFileConfig fileConfig = new FlatFileConfig();
+            fileConfig.setFileName(tempFile.getAbsolutePath());
+            fileConfig.setDelimiter(delimiter);
+            fileConfig.setHasHeader(hasHeader);
+            fileConfig.setSelectedColumns(clickHouseConfig.getSelectedColumns());
+
+            try {
+                IngestionResult result = dataIngestionService.ingestFromFileToClickHouse(fileConfig, clickHouseConfig);
+                return ResponseEntity.ok(result);
+            } finally {
+                // Cleanup
+                tempFile.delete();
+                tempDir.toFile().delete();
+            }
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(
+                IngestionResult.builder()
+                    .success(false)
+                    .message("Failed to process file: " + e.getMessage())
+                    .build()
+            );
+        }
+    }
+
+    @GetMapping("/exports/{fileName:.+}")
+    public ResponseEntity<Resource> downloadFile(@PathVariable String fileName) {
+        try {
+            Path filePath = Paths.get(EXPORT_DIR).resolve(fileName);
+            Resource resource = new FileSystemResource(filePath.toFile());
+            
+            if (resource.exists()) {
+                return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + resource.getFilename() + "\"")
+                    .body(resource);
+            } else {
+                return ResponseEntity.notFound().build();
+            }
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
         }
     }
 }

@@ -4,6 +4,7 @@ public class IngestionResult {
 
     private boolean success;
     private long recordsProcessed;
+
     private String message;
     private String errorDetails;
 
