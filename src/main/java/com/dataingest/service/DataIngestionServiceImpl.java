@@ -96,10 +96,19 @@ public class DataIngestionServiceImpl implements DataIngestionService {
     @Override
     public List<Map<String, Object>> previewData(ClickHouseConfig config, String tableName, int limit) {
         List<Map<String, Object>> preview = new ArrayList<>();
+        if (config.getSelectedColumns() == null || config.getSelectedColumns().length == 0) {
+            throw new IllegalArgumentException("No columns selected for preview");
+        }
+        
         String columns = String.join(", ", config.getSelectedColumns());
+        config.setSelectedTables(new String[]{tableName}); // Set the selected table
+        
         String query = String.format("SELECT %s FROM %s LIMIT %d", columns, tableName, limit);
+        log.info("Executing preview query: {}", query);
 
-        try (Connection conn = getConnection(config); Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(query)) {
+        try (Connection conn = getConnection(config);
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
 
             ResultSetMetaData metaData = rs.getMetaData();
             int columnCount = metaData.getColumnCount();
@@ -107,13 +116,16 @@ public class DataIngestionServiceImpl implements DataIngestionService {
             while (rs.next()) {
                 Map<String, Object> row = new HashMap<>();
                 for (int i = 1; i <= columnCount; i++) {
-                    row.put(metaData.getColumnName(i), rs.getObject(i));
+                    String columnName = metaData.getColumnName(i);
+                    Object value = rs.getObject(i);
+                    // Convert null values to empty string for consistent display
+                    row.put(columnName, value != null ? value.toString() : "");
                 }
                 preview.add(row);
             }
         } catch (Exception e) {
             log.error("Error previewing data: ", e);
-            throw new RuntimeException("Failed to preview data", e);
+            throw new RuntimeException("Failed to preview data: " + e.getMessage(), e);
         }
         return preview;
     }

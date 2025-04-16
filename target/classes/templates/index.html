@@ -145,8 +145,9 @@
 		<!-- Column Selection -->
 		<div id="columnSelection" class="hidden mb-4">
 			<h3>Column Selection</h3>
-			<div id="columns" class="mb-3"></div>
-			<button id="previewData" class="btn btn-info">Preview Data</button>
+			<div id="columns" class="mb-3">
+				<!-- Columns will be added here dynamically -->
+			</div>
 		</div>
 
 		<!-- Join Configuration (Bonus) -->
@@ -184,14 +185,19 @@
 			</div>
 		</div>
 
-		<!-- Data Preview -->
+		<!-- Preview Button Section -->
 		<div id="previewSection" class="hidden mb-4">
-			<h3>Data Preview</h3>
-			<div class="table-responsive">
-				<table id="previewTable" class="table table-striped">
-					<thead></thead>
-					<tbody></tbody>
-				</table>
+			<button id="previewData" class="btn btn-info">Preview Data</button>
+
+			<!-- Preview Table -->
+			<div class="mt-4">
+				<h3>Data Preview</h3>
+				<div class="table-responsive">
+					<table id="previewTable" class="table table-striped">
+						<thead></thead>
+						<tbody></tbody>
+					</table>
+				</div>
 			</div>
 		</div>
 
@@ -217,6 +223,15 @@
 	<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 	<script>
 		$(document).ready(function () {
+			// File input change handler
+			$("#file").change(function () {
+				if ($(this).val()) {
+					$("#actions").removeClass("hidden");
+				} else {
+					$("#actions").addClass("hidden");
+				}
+			});
+
 			// Source selection handling
 			$('input[name="source"]').change(function () {
 				const source = $(this).val();
@@ -245,8 +260,7 @@
 				if (source === "clickhouse") {
 					$("#clickhouseConfig").removeClass("hidden");
 				} else {
-					$("#fileConfig").removeClass("hidden");
-
+					$("#fileConfig, #previewSection").removeClass("hidden");
 					// When switching to file source, also need ClickHouse config for target
 					$("#clickhouseConfig").removeClass("hidden");
 					showInfo("Please configure ClickHouse connection for the target database");
@@ -325,7 +339,7 @@
 				});
 			});
 
-			// Load columns
+			// Load columns - update to show preview button
 			$("#loadColumns").click(function () {
 				const config = getClickHouseConfig();
 				const table = $("#tables").val();
@@ -333,7 +347,7 @@
 				// Show loading state
 				const $button = $(this);
 				$button.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Loading columns...');
-				$("#columnSelection").addClass("hidden");
+				$("#columnSelection, #previewSection").addClass("hidden");
 
 				$.ajax({
 					url: "/columns?tableName=" + table,
@@ -354,7 +368,7 @@
 									</div>
 								`);
 							});
-							$("#columnSelection").removeClass("hidden");
+							$("#columnSelection, #previewSection").removeClass("hidden");
 							showInfo(`Found ${columns.length} columns in table "${table}"`);
 						} else {
 							showError("No columns found in selected table");
@@ -363,12 +377,21 @@
 					error: function (xhr) {
 						$button.prop('disabled', false).text('Load Columns');
 						showError("Failed to load columns: " + xhr.responseText);
-					},
+					}
 				});
 			});
 
 			// Preview data
 			$("#previewData").click(function () {
+				const source = $('input[name="source"]:checked').val();
+				if (source === "clickhouse") {
+					previewClickHouseData();
+				} else {
+					previewFileData();
+				}
+			});
+
+			function previewClickHouseData() {
 				const config = getClickHouseConfig();
 				const selectedColumns = getSelectedColumns();
 				if (selectedColumns.length === 0) {
@@ -380,9 +403,8 @@
 				const table = $("#tables").val();
 
 				// Show loading state
-				const $button = $(this);
+				const $button = $("#previewData");
 				$button.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Loading preview...');
-				$("#previewSection, #actions").addClass("hidden");
 
 				$.ajax({
 					url: "/preview?tableName=" + table,
@@ -398,9 +420,44 @@
 					error: function (xhr) {
 						$button.prop('disabled', false).text('Preview Data');
 						showError("Failed to preview data: " + xhr.responseText);
-					},
+					}
 				});
-			});
+			}
+
+			function previewFileData() {
+				const file = $("#file")[0].files[0];
+				if (!file) {
+					showError("Please select a file to preview");
+					return;
+				}
+
+				const formData = new FormData();
+				formData.append("file", file);
+				formData.append("delimiter", $("#delimiter").val());
+				formData.append("hasHeader", $("#hasHeader").is(":checked"));
+
+				// Show loading state
+				const $button = $("#previewData");
+				$button.prop('disabled', true).html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Loading preview...');
+
+				$.ajax({
+					url: "/preview/file",
+					method: "POST",
+					data: formData,
+					processData: false,
+					contentType: false,
+					success: function (data) {
+						$button.prop('disabled', false).text('Preview Data');
+						displayPreview(data);
+						$("#actions").removeClass("hidden");
+						showInfo(`Showing preview of ${data.length} rows`);
+					},
+					error: function (xhr) {
+						$button.prop('disabled', false).text('Preview Data');
+						showError("Failed to preview file: " + xhr.responseText);
+					}
+				});
+			}
 
 			// Start ingestion
 			$("#startIngestion").click(function () {

@@ -16,13 +16,11 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.util.StringUtils;
 
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Controller
 public class DataIngestionController {
@@ -61,6 +59,58 @@ public class DataIngestionController {
             @RequestParam String tableName,
             @RequestParam(defaultValue = "100") int limit) {
         return dataIngestionService.previewData(config, tableName, limit);
+    }
+
+    @PostMapping("/preview/file")
+    @ResponseBody
+    public List<Map<String, Object>> previewFile(
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(defaultValue = ",") String delimiter,
+            @RequestParam(defaultValue = "true") boolean hasHeader,
+            @RequestParam(defaultValue = "10") int limit) throws IOException {
+        
+        List<Map<String, Object>> preview = new ArrayList<>();
+        String[] headers;
+        
+        // First read to get headers
+        try (BufferedReader headerReader = new BufferedReader(new InputStreamReader(file.getInputStream()))) {
+            String headerLine = headerReader.readLine();
+            if (headerLine == null) {
+                throw new IllegalArgumentException("File is empty");
+            }
+            
+            headers = headerLine.split(delimiter, -1);
+            if (!hasHeader) {
+                // If no header, use column1, column2, etc.
+                headers = new String[headers.length];
+                for (int i = 0; i < headers.length; i++) {
+                    headers[i] = "column" + (i + 1);
+                }
+            }
+        }
+
+        // Second read to get data
+        try (BufferedReader dataReader = new BufferedReader(new InputStreamReader(file.getInputStream()))) {
+            // Skip header if it exists
+            if (hasHeader) {
+                dataReader.readLine();
+            }
+            
+            // Read data rows
+            String line;
+            int rowCount = 0;
+            while ((line = dataReader.readLine()) != null && rowCount < limit) {
+                String[] values = line.split(delimiter, -1);
+                Map<String, Object> row = new HashMap<>();
+                for (int i = 0; i < Math.min(headers.length, values.length); i++) {
+                    row.put(headers[i], values[i]);
+                }
+                preview.add(row);
+                rowCount++;
+            }
+        }
+
+        return preview;
     }
 
     @PostMapping("/ingest/clickhouse-to-file")
